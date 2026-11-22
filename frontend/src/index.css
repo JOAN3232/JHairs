@@ -1,0 +1,180 @@
+
+/* ==========================================
+   JHAIRS — ORIGINAL GOOGLE FONTS
+   ========================================== */
+
+/*
+ * Outfit:
+ * Used for headings, titles and our luxury loader.
+ *
+ * DM Sans:
+ * Used for paragraphs, buttons and navigation.
+ */
+/* Original JHAIRS luxury typography */
+@import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600&family=DM+Sans:wght@400;500;600;700&display=swap");
+
+@import "tailwindcss";
+
+/* ==========================================
+   JHAIRS — CUSTOM THEME
+   ========================================== */
+
+@theme {
+  /* Original brand colours */
+  --color-ivory: #fffcfa;
+  --color-blush: #f8e3e9;
+  --color-powder: #e3eff7;
+  --color-rose: #d99aa5;
+  --color-plum: #4b2e39;
+  --color-gold: #d8b989;
+
+  /* RESTORED ORIGINAL FONTS */
+/* Original JHAIRS fonts */
+--font-heading: "Cormorant Garamond", Georgia, serif;
+--font-body: "DM Sans", Arial, sans-serif;
+}
+
+/* ==========================================
+   JHAIRS — GLOBAL TYPOGRAPHY
+   ========================================== */
+
+/* Default website typography */
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  color: var(--color-plum);
+  background-color: var(--color-ivory);
+}
+
+/* Use our luxury heading font */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-heading);
+}
+
+/* Keep form controls consistent */
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+/* ==========================================
+   JHAIRS — RESPONSIVE IMPROVEMENTS
+   ========================================== */
+
+/* Prevent horizontal overflow */
+html,
+body,
+#root {
+  width: 100%;
+  max-width: 100%;
+}
+
+/* Prevent decorative elements from
+   expanding the page sideways */
+body {
+  overflow-x: clip;
+}
+
+/* ==========================================
+   JHAIRS — SMOOTH SCROLLING
+   ========================================== */
+
+/* Smooth scrolling between sections */
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 80px;
+}
+
+/* Respect reduced-motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+/* ==========================================
+   JHAIRS — ORIGINAL SILK LOADER ANIMATIONS
+   ========================================== */
+
+/* Logo gradually appears */
+@keyframes jhairsLogoReveal {
+  from {
+    opacity: 0;
+    transform: translateY(15px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Silk strands draw across the screen */
+@keyframes jhairsDrawStrand {
+  from {
+    stroke-dashoffset: 400;
+    opacity: 0;
+  }
+
+  to {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}
+
+/* Brand tagline fades into view */
+@keyframes jhairsTaglineReveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Animate the JHAIRS logo */
+.jhairs-logo-reveal {
+  opacity: 0;
+  animation: jhairsLogoReveal 0.9s ease-out 0.2s forwards;
+}
+
+/* Animate the main pink silk strand */
+.jhairs-silk-strand {
+  stroke-dasharray: 400;
+  stroke-dashoffset: 400;
+  animation: jhairsDrawStrand 1.4s ease-in-out 0.4s forwards;
+}
+
+/* Animate the smaller golden strand */
+.jhairs-silk-strand-secondary {
+  stroke-dasharray: 400;
+  stroke-dashoffset: 400;
+  animation: jhairsDrawStrand 1.5s ease-in-out 0.6s forwards;
+}
+
+/* Animate the loader tagline */
+.jhairs-tagline-reveal {
+  opacity: 0;
+  animation: jhairsTaglineReveal 0.8s ease-out 0.9s forwards;
+}
+
+/* Reduce unnecessary movement */
+@media (prefers-reduced-motion: reduce) {
+  .jhairs-logo-reveal,
+  .jhairs-silk-strand,
+  .jhairs-silk-strand-secondary,
+  .jhairs-tagline-reveal {
+    animation-duration: 0.01ms;
+    animation-delay: 0ms;
+  }
+}
