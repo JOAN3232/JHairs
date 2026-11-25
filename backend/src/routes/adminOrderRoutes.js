@@ -4,29 +4,34 @@ import express from "express";
 import Order from "../models/Order.js";
 import { requireAdmin } from "../middleware/requireAdmin.js";
 
+import {
+  sendCustomerOrderEmail,
+  sendAdminOrderEmail,
+  sendDeliveryNotificationEmail,
+} from "../services/emailService.js";
+
 /**
  * JHAIRS — ADMIN ORDER ROUTES
  *
- * GET /api/admin/orders
- *   List, search, filter and paginate orders.
- *
- * GET /api/admin/orders/:id
- *   Retrieve complete order information.
- *
+ * GET   /api/admin/orders
+ * GET   /api/admin/orders/:id
  * PATCH /api/admin/orders/:id/status
- *   Safely update an order's fulfilment status.
+ * POST  /api/admin/orders/:id/resend-notifications
  *
  * SECURITY:
  * - Every route requires an authenticated administrator.
- * - Payment status cannot be changed here.
- * - Stock cannot be deducted here.
+ * - Payment status and inventory cannot be changed here.
  * - Status history is recorded with each update.
  * - Concurrent status changes are protected.
+ * - Email retries use atomic sending locks.
+ * - Previously successful emails are not resent.
+ * - Customer confirmation requires committed inventory.
+ * - Admin payment alerts remain available when inventory fails.
  */
 
 const router = express.Router();
 
-// Protect the entire router.
+// Protect every route in this router.
 router.use(requireAdmin);
 
 // ============================================
@@ -50,8 +55,6 @@ const PAYMENT_STATUSES = new Set([
   "REFUNDED",
 ]);
 
-// Define legal next steps.
-// We do not allow skipping fulfilment stages.
 const ALLOWED_TRANSITIONS = {
   PENDING: ["CONFIRMED", "CANCELLED"],
   CONFIRMED: ["PROCESSING", "CANCELLED"],
@@ -74,13 +77,196 @@ function isPlainString(value) {
 }
 
 function orderLookup(id) {
-  // Accept either a MongoDB ObjectId or an order reference.
   return /^[a-f\d]{24}$/i.test(id)
     ? { _id: id }
     : { orderNumber: id };
 }
 
-// Return a compact order representation for the list.
+// ============================================
+// SAFE EMAIL SENDING HELPER
+// ============================================
+
+/**
+ * Claims an email sending lock before sending.
+ *
+ * Each email type has its own sent timestamp and
+ * sending timestamp in the Order model.
+ *
+ * This prevents simultaneous requests from sending
+ * duplicate emails and allows failed emails to retry.
+ */
+
+async function sendTrackedEmailSafely({
+  orderId,
+  sentField,
+  sendingField,
+  sendEmail,
+  extraFilter = {},
+}) {
+  const now = new Date();
+
+  const staleLockTime = new Date(
+    now.getTime() - 5 * 60 * 1000
+  );
+
+  try {
+    // Atomically claim the email sending lock.
+    const order = await Order.findOneAndUpdate(
+      {
+        _id: orderId,
+        ...extraFilter,
+        [sentField]: null,
+
+        // Recover locks left behind by failed requests.
+        $or: [
+          { [sendingField]: null },
+          {
+            [sendingField]: {
+              $lt: staleLockTime,
+            },
+          },
+        ],
+      },
+      {
+        $set: {
+          [sendingField]: now,
+        },
+      },
+      {
+        returnDocument: "after",
+      }
+    );
+
+    // Already sent, currently being sent, or not eligible.
+    if (!order) {
+      return "NOT_SENT";
+    }
+
+    // Send the email through the existing Brevo service.
+    const emailSent = await sendEmail(order);
+
+    if (!emailSent) {
+      // Release the lock so an administrator can retry later.
+      await Order.updateOne(
+        {
+          _id: orderId,
+          [sendingField]: now,
+          [sentField]: null,
+        },
+        {
+          $set: {
+            [sendingField]: null,
+          },
+        }
+      );
+
+      console.error(
+        `${sentField} email failed for order ${order.orderNumber}.`
+      );
+
+      return "FAILED";
+    }
+
+    // Record successful submission and release the lock.
+    await Order.updateOne(
+      {
+        _id: orderId,
+        [sendingField]: now,
+      },
+      {
+        $set: {
+          [sentField]: new Date(),
+          [sendingField]: null,
+        },
+      }
+    );
+
+    console.log(
+      `${sentField} email sent for order ${order.orderNumber}.`
+    );
+
+    return "SENT";
+  } catch (error) {
+    console.error(`${sentField} email error:`, error);
+
+    // Attempt to release the lock after an error.
+    try {
+      await Order.updateOne(
+        {
+          _id: orderId,
+          [sendingField]: now,
+          [sentField]: null,
+        },
+        {
+          $set: {
+            [sendingField]: null,
+          },
+        }
+      );
+    } catch (releaseError) {
+      console.error(
+        `Unable to release ${sendingField} lock:`,
+        releaseError
+      );
+    }
+
+    return "FAILED";
+  }
+}
+
+// ============================================
+// INDIVIDUAL EMAIL HELPERS
+// ============================================
+
+// Customer confirmation requires both successful payment
+// and successfully committed inventory.
+async function sendCustomerConfirmationSafely(orderId) {
+  return sendTrackedEmailSafely({
+    orderId,
+    sentField: "customerConfirmationSentAt",
+    sendingField: "customerConfirmationSendingAt",
+    sendEmail: sendCustomerOrderEmail,
+    extraFilter: {
+      paymentStatus: "PAID",
+      inventoryCommitted: true,
+    },
+  });
+}
+
+// Admin must receive payment notifications even when
+// inventory could not be committed.
+async function sendAdminNotificationSafely(orderId) {
+  return sendTrackedEmailSafely({
+    orderId,
+    sentField: "adminNotificationSentAt",
+    sendingField: "adminNotificationSendingAt",
+    sendEmail: sendAdminOrderEmail,
+    extraFilter: {
+      paymentStatus: "PAID",
+    },
+  });
+}
+
+// Delivery notifications require payment, committed stock,
+// and an order that has actually been shipped.
+async function sendDeliveryEmailSafely(orderId) {
+  return sendTrackedEmailSafely({
+    orderId,
+    sentField: "deliveryNotificationSentAt",
+    sendingField: "deliveryNotificationSendingAt",
+    sendEmail: sendDeliveryNotificationEmail,
+    extraFilter: {
+      orderStatus: "SHIPPED",
+      paymentStatus: "PAID",
+      inventoryCommitted: true,
+    },
+  });
+}
+
+// ============================================
+// ORDER RESPONSE HELPERS
+// ============================================
+
 function toOrderSummary(order) {
   return {
     id: String(order._id),
@@ -109,7 +295,6 @@ function toOrderSummary(order) {
   };
 }
 
-// Return full order information for the details panel.
 function toOrderDetails(order) {
   return {
     id: String(order._id),
@@ -140,10 +325,20 @@ function toOrderDetails(order) {
     orderStatus: order.orderStatus,
     paymentStatus: order.paymentStatus,
     paymentReference: order.paymentReference,
+    paymentIssue: order.paymentIssue,
     inventoryCommitted: order.inventoryCommitted,
 
-    // NEW — Audit history.
     statusHistory: order.statusHistory || [],
+
+    // Email notification tracking.
+    customerConfirmationSentAt:
+      order.customerConfirmationSentAt,
+
+    adminNotificationSentAt:
+      order.adminNotificationSentAt,
+
+    deliveryNotificationSentAt:
+      order.deliveryNotificationSentAt,
 
     createdAt: order.createdAt,
     updatedAt: order.updatedAt,
@@ -160,7 +355,6 @@ router.get("/", async (req, res) => {
     const rawPage = req.query.page ?? "1";
     const rawLimit = req.query.limit ?? "10";
 
-    // Accept whole-number pagination parameters only.
     if (
       !/^\d+$/.test(String(rawPage)) ||
       !/^\d+$/.test(String(rawLimit))
@@ -190,7 +384,6 @@ router.get("/", async (req, res) => {
 
     const { orderStatus, paymentStatus, search } = req.query;
 
-    // Validate order-status filter.
     if (
       orderStatus !== undefined &&
       (!isPlainString(orderStatus) ||
@@ -202,7 +395,6 @@ router.get("/", async (req, res) => {
       });
     }
 
-    // Validate payment-status filter.
     if (
       paymentStatus !== undefined &&
       (!isPlainString(paymentStatus) ||
@@ -214,7 +406,6 @@ router.get("/", async (req, res) => {
       });
     }
 
-    // Validate the search query.
     if (
       search !== undefined &&
       (typeof search !== "string" ||
@@ -226,7 +417,6 @@ router.get("/", async (req, res) => {
       });
     }
 
-    // Build the MongoDB query.
     const filter = {};
 
     if (orderStatus) {
@@ -252,7 +442,6 @@ router.get("/", async (req, res) => {
       ];
     }
 
-    // Retrieve results and count in parallel.
     const [orders, totalOrders] = await Promise.all([
       Order.find(filter)
         .select("-orderRequestHash -orderRequestId -__v")
@@ -310,7 +499,6 @@ router.patch("/:id/status", async (req, res) => {
       });
     }
 
-    // Read the current saved order.
     const order = await Order.findOne(orderLookup(id))
       .select(
         "orderNumber orderStatus paymentStatus inventoryCommitted statusHistory"
@@ -326,7 +514,6 @@ router.patch("/:id/status", async (req, res) => {
 
     const previousStatus = order.orderStatus;
 
-    // Reject repeated status updates.
     if (previousStatus === status) {
       return res.status(409).json({
         success: false,
@@ -334,7 +521,6 @@ router.patch("/:id/status", async (req, res) => {
       });
     }
 
-    // Enforce allowed order-status transitions.
     const allowedNextStatuses =
       ALLOWED_TRANSITIONS[previousStatus] || [];
 
@@ -346,15 +532,7 @@ router.patch("/:id/status", async (req, res) => {
       });
     }
 
-    // ========================================
-    // PAYMENT AND STOCK SAFEGUARDS
-    // ========================================
-
-    // A CONFIRMED order is only an acknowledged
-    // customer request. It does not mean paid.
-    //
-    // PROCESSING and later stages require a
-    // completed payment and committed inventory.
+    // Processing requires verified payment and committed inventory.
     if (status === "PROCESSING") {
       if (
         order.paymentStatus !== "PAID" ||
@@ -368,16 +546,25 @@ router.patch("/:id/status", async (req, res) => {
       }
     }
 
-    // Do not cancel a paid, payment-pending, or
-    // stock-committed order through this simple route.
-    //
-    // Those cases require dedicated refund and
-    // inventory-restoration workflows.
+    // Shipping also requires verified payment and committed inventory.
+    if (status === "SHIPPED") {
+      if (
+        order.paymentStatus !== "PAID" ||
+        order.inventoryCommitted !== true
+      ) {
+        return res.status(409).json({
+          success: false,
+          message:
+            "This order cannot be shipped until payment is verified and inventory is committed.",
+        });
+      }
+    }
+
+    // Do not cancel a paid, payment-pending, or stock-committed order.
     if (status === "CANCELLED") {
       const cancellationAllowed =
-        ["UNPAID", "FAILED"].includes(
-          order.paymentStatus
-        ) && order.inventoryCommitted === false;
+        ["UNPAID", "FAILED"].includes(order.paymentStatus) &&
+        order.inventoryCommitted === false;
 
       if (!cancellationAllowed) {
         return res.status(409).json({
@@ -388,10 +575,6 @@ router.patch("/:id/status", async (req, res) => {
       }
     }
 
-    // ========================================
-    // RECORD AUDIT HISTORY ATOMICALLY
-    // ========================================
-
     const historyEntry = {
       from: previousStatus,
       to: status,
@@ -399,11 +582,7 @@ router.patch("/:id/status", async (req, res) => {
       changedAt: new Date(),
     };
 
-    // Use a conditional update so two administrators
-    // cannot overwrite each other's status changes.
-    //
-    // Payment and inventory conditions are also
-    // checked against the current database values.
+    // Prevent concurrent administrators from overwriting changes.
     const updatedOrder = await Order.findOneAndUpdate(
       {
         _id: order._id,
@@ -421,7 +600,7 @@ router.patch("/:id/status", async (req, res) => {
         },
       },
       {
-        new: true,
+        returnDocument: "after",
         runValidators: true,
       }
     ).select(
@@ -436,10 +615,30 @@ router.patch("/:id/status", async (req, res) => {
       });
     }
 
-    // Return only safe order-management details.
+    // ========================================
+    // SEND OUT-FOR-DELIVERY EMAIL
+    // ========================================
+
+    let deliveryEmailStatus = "NOT_APPLICABLE";
+
+    if (
+      previousStatus === "PROCESSING" &&
+      updatedOrder.orderStatus === "SHIPPED"
+    ) {
+      deliveryEmailStatus = await sendDeliveryEmailSafely(
+        updatedOrder._id
+      );
+    }
+
     return res.status(200).json({
       success: true,
-      message: "Order status updated successfully.",
+
+      message:
+        deliveryEmailStatus === "FAILED"
+          ? "Order status updated, but the delivery email could not be sent. It can be retried."
+          : "Order status updated successfully.",
+
+      deliveryEmailStatus,
 
       order: {
         id: String(updatedOrder._id),
@@ -457,6 +656,101 @@ router.patch("/:id/status", async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Unable to update the order status.",
+    });
+  }
+});
+
+// ============================================
+// POST /api/admin/orders/:id/resend-notifications
+// RETRY UNSENT ORDER EMAILS
+// ============================================
+
+router.post("/:id/resend-notifications", async (req, res) => {
+  try {
+    const order = await Order.findOne(orderLookup(req.params.id))
+      .select(
+        "orderNumber orderStatus paymentStatus inventoryCommitted customerConfirmationSentAt adminNotificationSentAt deliveryNotificationSentAt"
+      )
+      .lean();
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found.",
+      });
+    }
+
+    // Do not retry payment-related notifications before payment is verified.
+    if (order.paymentStatus !== "PAID") {
+      return res.status(409).json({
+        success: false,
+        message:
+          "Order notifications can only be retried after payment has been verified.",
+      });
+    }
+
+    const results = {
+      customerConfirmation: "NOT_APPLICABLE",
+      adminNotification: "NOT_APPLICABLE",
+      deliveryNotification: "NOT_APPLICABLE",
+    };
+
+    // Only send customer confirmation after inventory is committed.
+    if (order.inventoryCommitted === true) {
+      if (!order.customerConfirmationSentAt) {
+        results.customerConfirmation =
+          await sendCustomerConfirmationSafely(order._id);
+      } else {
+        results.customerConfirmation = "ALREADY_SENT";
+      }
+    } else {
+      results.customerConfirmation = "WAITING_FOR_INVENTORY";
+    }
+
+    // Admin must still receive payment alerts when stock is unavailable.
+    if (!order.adminNotificationSentAt) {
+      results.adminNotification =
+        await sendAdminNotificationSafely(order._id);
+    } else {
+      results.adminNotification = "ALREADY_SENT";
+    }
+
+    // Delivery email is only eligible for shipped orders with committed stock.
+    if (
+      order.orderStatus === "SHIPPED" &&
+      order.inventoryCommitted === true
+    ) {
+      if (!order.deliveryNotificationSentAt) {
+        results.deliveryNotification =
+          await sendDeliveryEmailSafely(order._id);
+      } else {
+        results.deliveryNotification = "ALREADY_SENT";
+      }
+    }
+
+    const hasFailure = Object.values(results).includes("FAILED");
+
+    const hasSentEmail = Object.values(results).includes("SENT");
+
+    const message = hasFailure
+      ? "Some notifications could not be sent. You can retry them again."
+      : hasSentEmail
+        ? "Unsent notifications were processed successfully."
+        : !order.inventoryCommitted
+          ? "The admin notification was processed. Customer confirmation is waiting for inventory resolution."
+          : "There are no eligible unsent notifications to retry.";
+
+    return res.status(200).json({
+      success: true,
+      message,
+      results,
+    });
+  } catch (error) {
+    console.error("JHAIRS admin notification retry error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to retry order notifications right now.",
     });
   }
 });

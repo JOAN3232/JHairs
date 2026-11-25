@@ -12,6 +12,7 @@ import {
   ClipboardList,
   LoaderCircle,
   LogOut,
+  Mail,
   Package,
   RefreshCw,
   Search,
@@ -32,17 +33,16 @@ import {
  * - Detailed customer and delivery information.
  * - Protected order-status updates.
  * - Order-status history.
- * - Refresh after successful updates.
+ * - Email notification tracking.
+ * - Admin retry for failed or unsent emails.
+ * - Automatic refresh after successful actions.
  *
  * SECURITY:
  * - Uses existing administrator JWT.
  * - Backend validates all status changes.
  * - No payment-status modifications.
  * - No inventory deductions.
- *
- * FIX:
- * - Removed synchronous setState calls
- *   from the OrderDetails effect.
+ * - Email retries are handled by protected backend routes.
  */
 
 // ============================================
@@ -178,6 +178,61 @@ function StatusBadge({ status }) {
 }
 
 // ============================================
+// EMAIL NOTIFICATION STATUS
+// ============================================
+
+function EmailStatus({ label, sentAt, notApplicable = false }) {
+  // A notification can be marked as not applicable.
+  if (notApplicable) {
+    return (
+      <div className="flex items-start justify-between gap-3 py-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-[#553747]">
+            {label}
+          </p>
+
+          <p className="mt-1 text-xs text-[#A3959B]">
+            Not applicable to this order yet
+          </p>
+        </div>
+
+        <span className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[10px] font-medium text-slate-600">
+          Not applicable
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-start justify-between gap-3 py-3">
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-[#553747]">
+          {label}
+        </p>
+
+        <p className="mt-1 text-xs text-[#A3959B]">
+          {sentAt
+            ? `Sent ${formatDate(sentAt)}`
+            : "No successful send recorded"}
+        </p>
+      </div>
+
+      {sentAt ? (
+        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-green-200 bg-green-50 px-3 py-1.5 text-[10px] font-medium text-green-700">
+          <CheckCircle2 size={12} />
+          Sent
+        </span>
+      ) : (
+        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-[10px] font-medium text-amber-700">
+          <Clock3 size={12} />
+          Pending
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ============================================
 // ORDER DETAILS PANEL
 // ============================================
 
@@ -188,19 +243,21 @@ function OrderDetails({
   updating,
   updateError,
   updateSuccess,
+  resending,
+  resendError,
+  resendSuccess,
   onUpdateStatus,
+  onResendNotifications,
   onClose,
 }) {
   /**
    * The administrator chooses a new status.
    *
-   * We no longer reset this state inside useEffect.
-   *
    * The parent provides a React key containing
    * the order ID and current status.
    *
-   * When either changes, React remounts this
-   * component and resets the selection naturally.
+   * This resets the selection naturally whenever
+   * the order or its current status changes.
    */
   const [nextStatus, setNextStatus] = useState("");
 
@@ -238,6 +295,29 @@ function OrderDetails({
   );
 
   // ==========================================
+  // EMAIL NOTIFICATION ELIGIBILITY
+  // ==========================================
+
+  const isPaid = order?.paymentStatus === "PAID";
+
+  const deliveryEmailApplicable =
+    order?.orderStatus === "SHIPPED" &&
+    order?.inventoryCommitted === true;
+
+  // Check whether any eligible notification
+  // has not yet been successfully recorded.
+  const hasUnsentNotifications =
+    isPaid &&
+    (
+      !order?.customerConfirmationSentAt ||
+      !order?.adminNotificationSentAt ||
+      (
+        deliveryEmailApplicable &&
+        !order?.deliveryNotificationSentAt
+      )
+    );
+
+  // ==========================================
   // CONFIRM AN ORDER STATUS CHANGE
   // ==========================================
 
@@ -271,7 +351,8 @@ function OrderDetails({
       onMouseDown={(event) => {
         if (
           event.target === event.currentTarget &&
-          !updating
+          !updating &&
+          !resending
         ) {
           onClose();
         }
@@ -301,7 +382,7 @@ function OrderDetails({
           <button
             type="button"
             onClick={onClose}
-            disabled={updating}
+            disabled={updating || resending}
             aria-label="Close order details"
             className="rounded-full border border-[#EADCE2] bg-white p-3 text-[#705565] hover:bg-[#F9EDF2] disabled:opacity-50"
           >
@@ -433,7 +514,7 @@ function OrderDetails({
 
                     <button
                       type="submit"
-                      disabled={!nextStatus || updating}
+                      disabled={!nextStatus || updating || resending}
                       className="flex w-full items-center justify-center gap-2 rounded-full bg-[#553747] px-5 py-3.5 text-sm font-medium text-white hover:bg-[#80566B] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {updating ? (
@@ -489,6 +570,131 @@ function OrderDetails({
 
                   Payment status and product inventory
                   cannot be changed from this page.
+                </p>
+              </section>
+
+              {/* =================================
+                  EMAIL NOTIFICATION MANAGEMENT
+                 ================================= */}
+
+              <section className="rounded-[22px] border border-[#F0DCE6] bg-white p-5">
+                <div className="flex items-start gap-3">
+                  <div className="rounded-xl bg-[#F8EDF2] p-3 text-[#A6758D]">
+                    <Mail size={20} />
+                  </div>
+
+                  <div>
+                    <h3 className="font-heading text-xl text-[#553747]">
+                      Email Notifications
+                    </h3>
+
+                    <p className="mt-2 text-xs leading-6 text-[#917F87]">
+                      Monitor the notification emails associated
+                      with this order.
+                    </p>
+                  </div>
+                </div>
+
+                {!isPaid ? (
+                  <div className="mt-5 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                    <Clock3
+                      size={18}
+                      className="mt-0.5 shrink-0 text-amber-700"
+                    />
+
+                    <p className="text-xs leading-6 text-amber-800">
+                      Email notifications become eligible after
+                      successful payment verification.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="mt-5 divide-y divide-[#F0E5E9]">
+                      <EmailStatus
+                        label="Customer Order Confirmation"
+                        sentAt={order.customerConfirmationSentAt}
+                      />
+
+                      <EmailStatus
+                        label="Admin New Order Notification"
+                        sentAt={order.adminNotificationSentAt}
+                      />
+
+                      <EmailStatus
+                        label="Out-for-Delivery Notification"
+                        sentAt={order.deliveryNotificationSentAt}
+                        notApplicable={!deliveryEmailApplicable}
+                      />
+                    </div>
+
+                    {/* Retry notification emails */}
+                    {hasUnsentNotifications && (
+                      <button
+                        type="button"
+                        onClick={onResendNotifications}
+                        disabled={resending || updating}
+                        className="mt-5 flex w-full items-center justify-center gap-2 rounded-full bg-[#553747] px-5 py-3.5 text-sm font-medium text-white transition hover:bg-[#80566B] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {resending ? (
+                          <LoaderCircle
+                            size={17}
+                            className="animate-spin"
+                          />
+                        ) : (
+                          <RefreshCw size={17} />
+                        )}
+
+                        {resending
+                          ? "Retrying Emails..."
+                          : "Retry Failed Emails"}
+                      </button>
+                    )}
+
+                    {/* All eligible notifications have been sent */}
+                    {!hasUnsentNotifications && (
+                      <div className="mt-5 flex items-center gap-2 rounded-xl border border-green-200 bg-green-50 p-4 text-xs text-green-700">
+                        <CheckCircle2 size={17} />
+
+                        All currently applicable notification
+                        emails have been recorded as sent.
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* Retry error */}
+                {resendError && (
+                  <p
+                    role="alert"
+                    className="mt-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
+                  >
+                    <TriangleAlert
+                      size={17}
+                      className="mt-0.5 shrink-0"
+                    />
+
+                    {resendError}
+                  </p>
+                )}
+
+                {/* Retry success */}
+                {resendSuccess && (
+                  <p
+                    role="status"
+                    className="mt-4 flex items-start gap-2 rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-700"
+                  >
+                    <CheckCircle2
+                      size={17}
+                      className="mt-0.5 shrink-0"
+                    />
+
+                    {resendSuccess}
+                  </p>
+                )}
+
+                <p className="mt-4 text-[11px] leading-5 text-[#A3959B]">
+                  Successfully recorded emails will not be sent
+                  again through the retry action.
                 </p>
               </section>
 
@@ -783,6 +989,11 @@ function AdminOrders({ session, onLogout }) {
   const [updateError, setUpdateError] = useState("");
   const [updateSuccess, setUpdateSuccess] = useState("");
 
+  // Email retry states.
+  const [resending, setResending] = useState(false);
+  const [resendError, setResendError] = useState("");
+  const [resendSuccess, setResendSuccess] = useState("");
+
   // ==========================================
   // LOAD CUSTOMER ORDERS FROM MONGODB
   // ==========================================
@@ -897,6 +1108,8 @@ function AdminOrders({ session, onLogout }) {
 
       setUpdateError("");
       setUpdateSuccess("");
+      setResendError("");
+      setResendSuccess("");
 
       try {
         const response = await fetch(
@@ -952,7 +1165,7 @@ function AdminOrders({ session, onLogout }) {
   // ==========================================
 
   async function handleUpdateStatus(nextStatus) {
-    if (!selectedOrder || updating) return;
+    if (!selectedOrder || updating || resending) return;
 
     const orderId = selectedOrder.id;
 
@@ -1028,6 +1241,82 @@ function AdminOrders({ session, onLogout }) {
   }
 
   // ==========================================
+  // RETRY UNSENT EMAIL NOTIFICATIONS
+  // ==========================================
+
+  async function handleResendNotifications() {
+    if (!selectedOrder || resending || updating) return;
+
+    const orderId = selectedOrder.id;
+
+    setResending(true);
+    setResendError("");
+    setResendSuccess("");
+
+    try {
+      // Call the protected backend retry endpoint.
+      const response = await fetch(
+        `${API_BASE_URL}/api/admin/orders/${encodeURIComponent(
+          orderId
+        )}/resend-notifications`,
+        {
+          method: "POST",
+
+          headers: {
+            Authorization: `Bearer ${session.token}`,
+          },
+        }
+      );
+
+      // End the session if the administrator token
+      // is no longer valid.
+      if (response.status === 401) {
+        onLogout();
+        return;
+      }
+
+      const data = await readResponse(response);
+
+      // Show the backend's retry result.
+      setResendSuccess(
+        data.message ||
+          "Email notification retry request completed."
+      );
+
+      // Retrieve the latest order details so the
+      // notification timestamps are immediately updated.
+      const detailsResponse = await fetch(
+        `${API_BASE_URL}/api/admin/orders/${encodeURIComponent(
+          orderId
+        )}`,
+        {
+          headers: {
+            Authorization: `Bearer ${session.token}`,
+          },
+
+          cache: "no-store",
+        }
+      );
+
+      if (detailsResponse.status === 401) {
+        onLogout();
+        return;
+      }
+
+      const detailsData = await readResponse(detailsResponse);
+
+      setSelectedOrder(detailsData.order);
+
+      // Refresh the main order list as well.
+      setRefreshKey((previous) => previous + 1);
+    } catch (requestError) {
+      setResendError(requestError.message);
+    } finally {
+      setResending(false);
+    }
+  }
+
+  // ==========================================
   // SEARCH HANDLER
   // ==========================================
 
@@ -1051,7 +1340,7 @@ function AdminOrders({ session, onLogout }) {
   // ==========================================
 
   function handleCloseDetails() {
-    if (updating) return;
+    if (updating || resending) return;
 
     setSelectedOrderId(null);
     setSelectedOrder(null);
@@ -1059,6 +1348,9 @@ function AdminOrders({ session, onLogout }) {
     setDetailError("");
     setUpdateError("");
     setUpdateSuccess("");
+
+    setResendError("");
+    setResendSuccess("");
   }
 
   // ==========================================
@@ -1520,12 +1812,10 @@ function AdminOrders({ session, onLogout }) {
 
       {/* =====================================
           SELECTED ORDER DETAILS
-          
+
           The key resets the local selected
           status whenever the order or its
           current status changes.
-
-          No useEffect state reset is needed.
          ===================================== */}
 
       {selectedOrderId && (
@@ -1537,7 +1827,11 @@ function AdminOrders({ session, onLogout }) {
           updating={updating}
           updateError={updateError}
           updateSuccess={updateSuccess}
+          resending={resending}
+          resendError={resendError}
+          resendSuccess={resendSuccess}
           onUpdateStatus={handleUpdateStatus}
+          onResendNotifications={handleResendNotifications}
           onClose={handleCloseDetails}
         />
       )}

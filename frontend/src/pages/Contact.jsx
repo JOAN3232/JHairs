@@ -1,3 +1,4 @@
+
 import { useState } from "react";
 import {
   ArrowRight,
@@ -5,25 +6,26 @@ import {
   Mail,
   MessageCircle,
   Clock3,
-  CheckCircle2,
   Camera,
 } from "lucide-react";
 
-/**
- * JHAIRS — CONTACT PAGE
- *
- * Features:
- * - Minimal luxury introduction.
- * - Responsive customer enquiry form.
- * - Contact information.
- * - Frequently asked questions.
- * - Frontend form validation.
- *
- * Messages are NOT sent yet.
- * We will connect the form to our backend later.
- */
+// ============================================
+// JHAIRS — CUSTOMER SUPPORT DETAILS
+// ============================================
 
-// Frequently asked questions displayed below the form.
+const WHATSAPP_NUMBER = "2349136466679";
+const SUPPORT_EMAIL = "agujoan86@gmail.com";
+
+// Create a WhatsApp link with a custom message.
+const createWhatsAppLink = (message) =>
+  `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(
+    message
+  )}`;
+
+// ============================================
+// FREQUENTLY ASKED QUESTIONS
+// ============================================
+
 const faqs = [
   {
     question: "How do I choose the right hair?",
@@ -38,17 +40,21 @@ const faqs = [
   {
     question: "How long does delivery take?",
     answer:
-      "Delivery times depend on your location and the shipping option available for your order. We'll provide confirmed delivery details when order processing is enabled.",
+      "Delivery times depend on your location and the shipping option available for your order. Please contact us directly for delivery information regarding your location.",
   },
   {
     question: "How can I track my order?",
     answer:
-      "Order tracking will become available once our ordering and delivery systems are connected.",
+      "For updates about your order, please contact our customer support team on WhatsApp with your order details.",
   },
 ];
 
+// ============================================
+// CONTACT PAGE
+// ============================================
+
 function Contact() {
-  // Store the information entered into our contact form.
+  // Store information entered into the enquiry form.
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -59,9 +65,6 @@ function Contact() {
   // Control which FAQ is expanded.
   const [openFaq, setOpenFaq] = useState(null);
 
-  // Show a notice explaining the form's current status.
-  const [showNotice, setShowNotice] = useState(false);
-
   // Update form values whenever a customer types.
   const handleChange = (event) => {
     const { name, value } = event.target;
@@ -70,22 +73,47 @@ function Contact() {
       ...previous,
       [name]: value,
     }));
-
-    // Hide the previous notice when editing.
-    setShowNotice(false);
   };
 
-  // Validate input before showing the frontend notice.
+  // Send the customer's enquiry through WhatsApp.
   const handleSubmit = (event) => {
     event.preventDefault();
 
-    // Browser validates required inputs and email format.
-    // Our backend will eventually handle message delivery.
-    setShowNotice(true);
+    // Create a formatted message containing all
+    // information entered into the contact form.
+    const whatsappMessage = `
+Hello JHAIRS!
+
+I would like to make an enquiry.
+
+Name: ${formData.name}
+Email: ${formData.email}
+Enquiry Topic: ${formData.subject}
+
+Message:
+${formData.message}
+    `.trim();
+
+    // Open WhatsApp with the enquiry pre-filled.
+    const whatsappLink = createWhatsAppLink(
+      whatsappMessage
+    );
+
+    window.open(
+      whatsappLink,
+      "_blank",
+      "noopener,noreferrer"
+    );
   };
+
+  // Open WhatsApp for general customer support.
+  const generalWhatsAppLink = createWhatsAppLink(
+    "Hello JHAIRS! I'd love to make an enquiry about your hair collections."
+  );
 
   return (
     <main className="min-h-screen bg-[#FFFCFA]">
+
       {/* ======================================= */}
       {/* SECTION 1 — CONTACT INTRODUCTION        */}
       {/* ======================================= */}
@@ -98,6 +126,7 @@ function Contact() {
         "
       >
         <div className="mx-auto max-w-[800px] text-center">
+
           <p
             className="
               font-body text-[11px] font-medium
@@ -124,8 +153,9 @@ function Contact() {
               text-plum/65 sm:text-base
             "
           >
-            Have a question about our hair or need a little guidance? We're here
-            to help you find your perfect look.
+            Have a question about our hair or need a little
+            guidance? We're here to help you find your
+            perfect look.
           </p>
 
           <div
@@ -158,6 +188,7 @@ function Contact() {
             lg:gap-12
           "
         >
+
           {/* ========== CONTACT FORM ========== */}
 
           <div
@@ -192,14 +223,26 @@ function Contact() {
                 leading-7 text-plum/60
               "
             >
-              Fill in your details and tell us what's on your mind.
+              Fill in your details and tell us what's
+              on your mind. Your enquiry will open
+              directly in WhatsApp for you to send.
             </p>
 
-            <form onSubmit={handleSubmit} className="mt-8 space-y-6">
+            <form
+              onSubmit={handleSubmit}
+              className="mt-8 space-y-6"
+            >
+
               {/* Name and email fields */}
               <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+
                 <label className="block">
-                  <span className="mb-2 block font-body text-sm text-plum/75">
+                  <span
+                    className="
+                      mb-2 block font-body
+                      text-sm text-plum/75
+                    "
+                  >
                     Your Name *
                   </span>
 
@@ -223,7 +266,12 @@ function Contact() {
                 </label>
 
                 <label className="block">
-                  <span className="mb-2 block font-body text-sm text-plum/75">
+                  <span
+                    className="
+                      mb-2 block font-body
+                      text-sm text-plum/75
+                    "
+                  >
                     Email Address *
                   </span>
 
@@ -249,7 +297,12 @@ function Contact() {
 
               {/* Enquiry topic */}
               <label className="block">
-                <span className="mb-2 block font-body text-sm text-plum/75">
+                <span
+                  className="
+                    mb-2 block font-body
+                    text-sm text-plum/75
+                  "
+                >
                   What Is Your Enquiry About? *
                 </span>
 
@@ -270,7 +323,9 @@ function Contact() {
                     Select a topic
                   </option>
 
-                  <option value="Product Enquiry">Product Enquiry</option>
+                  <option value="Product Enquiry">
+                    Product Enquiry
+                  </option>
 
                   <option value="Hair Recommendations">
                     Hair Recommendations
@@ -280,15 +335,28 @@ function Contact() {
                     Delivery Information
                   </option>
 
-                  <option value="Order Enquiry">Order Enquiry</option>
+                  <option value="Order Enquiry">
+                    Order Enquiry
+                  </option>
 
-                  <option value="Other">Other</option>
+                  <option value="Payment Enquiry">
+                    Payment Enquiry
+                  </option>
+
+                  <option value="Other">
+                    Other
+                  </option>
                 </select>
               </label>
 
               {/* Customer message */}
               <label className="block">
-                <span className="mb-2 block font-body text-sm text-plum/75">
+                <span
+                  className="
+                    mb-2 block font-body
+                    text-sm text-plum/75
+                  "
+                >
                   Your Message *
                 </span>
 
@@ -312,28 +380,6 @@ function Contact() {
                 />
               </label>
 
-              {/* Form-status notice */}
-              {showNotice && (
-                <div
-                  role="status"
-                  className="
-                    flex items-start gap-3
-                    rounded-2xl bg-ivory p-4
-                  "
-                >
-                  <CheckCircle2
-                    size={20}
-                    className="mt-0.5 shrink-0 text-rose"
-                  />
-
-                  <p className="font-body text-sm leading-6 text-plum/70">
-                    Your details are complete! Message submission will be
-                    available once our contact service is connected. Nothing has
-                    been sent yet.
-                  </p>
-                </div>
-              )}
-
               {/* Submit button */}
               <button
                 type="submit"
@@ -346,15 +392,27 @@ function Contact() {
                   hover:bg-rose sm:w-auto
                 "
               >
-                Check My Enquiry
-                <ArrowRight size={18} />
+                Send Enquiry on WhatsApp
+                <MessageCircle size={18} />
               </button>
+
+              <p
+                className="
+                  font-body text-xs leading-6
+                  text-plum/45
+                "
+              >
+                Clicking this button opens WhatsApp
+                with your enquiry ready to send.
+              </p>
             </form>
           </div>
 
           {/* ========== CONTACT INFORMATION ========== */}
 
           <aside className="min-w-0 space-y-6">
+
+            {/* Contact information card */}
             <div
               className="
                 rounded-[28px] bg-ivory
@@ -379,14 +437,27 @@ function Contact() {
                 We're Here For You
               </h2>
 
-              <p className="mt-3 font-body text-sm leading-7 text-plum/60">
-                Whether you're exploring a new hairstyle or have questions about
-                our collection, we'd love to help.
+              <p
+                className="
+                  mt-3 font-body text-sm
+                  leading-7 text-plum/60
+                "
+              >
+                Whether you're exploring a new hairstyle
+                or have questions about our collection,
+                we'd love to help.
               </p>
 
               <div className="mt-8 space-y-7">
+
                 {/* Email details */}
-                <div className="flex items-start gap-4">
+                <a
+                  href={`mailto:${SUPPORT_EMAIL}`}
+                  className="
+                    flex items-start gap-4
+                    group
+                  "
+                >
                   <div
                     className="
                       flex h-11 w-11 shrink-0
@@ -397,19 +468,47 @@ function Contact() {
                     <Mail size={20} strokeWidth={1.6} />
                   </div>
 
-                  <div>
-                    <h3 className="font-body text-sm font-semibold text-plum">
+                  <div className="min-w-0">
+                    <h3
+                      className="
+                        font-body text-sm font-semibold
+                        text-plum
+                      "
+                    >
                       Email
                     </h3>
-                    <p className="mt-1 font-body text-sm leading-6 text-plum/60">
-                      Email contact details will be added when the store is
-                      ready.
+
+                    <p
+                      className="
+                        mt-1 break-all font-body
+                        text-sm leading-6 text-plum/60
+                        transition-colors group-hover:text-rose
+                      "
+                    >
+                      {SUPPORT_EMAIL}
+                    </p>
+
+                    <p
+                      className="
+                        mt-1 font-body text-xs
+                        text-rose
+                      "
+                    >
+                      Send us an email
                     </p>
                   </div>
-                </div>
+                </a>
 
-                {/* Chat support */}
-                <div className="flex items-start gap-4">
+                {/* WhatsApp support */}
+                <a
+                  href={generalWhatsAppLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="
+                    flex items-start gap-4
+                    group
+                  "
+                >
                   <div
                     className="
                       flex h-11 w-11 shrink-0
@@ -417,20 +516,43 @@ function Contact() {
                       rounded-full bg-white text-rose
                     "
                   >
-                    <MessageCircle size={20} strokeWidth={1.6} />
+                    <MessageCircle
+                      size={20}
+                      strokeWidth={1.6}
+                    />
                   </div>
 
                   <div>
-                    <h3 className="font-body text-sm font-semibold text-plum">
+                    <h3
+                      className="
+                        font-body text-sm font-semibold
+                        text-plum
+                      "
+                    >
                       Customer Support
                     </h3>
-                    <p className="mt-1 font-body text-sm leading-6 text-plum/60">
-                      Our customer support channel will be available soon.
+
+                    <p
+                      className="
+                        mt-1 font-body text-sm
+                        leading-6 text-plum/60
+                      "
+                    >
+                      Chat with us directly on WhatsApp.
+                    </p>
+
+                    <p
+                      className="
+                        mt-1 font-body text-xs
+                        text-rose
+                      "
+                    >
+                      Chat with JHAIRS
                     </p>
                   </div>
-                </div>
+                </a>
 
-                {/* Support information */}
+                {/* Support hours */}
                 <div className="flex items-start gap-4">
                   <div
                     className="
@@ -443,14 +565,27 @@ function Contact() {
                   </div>
 
                   <div>
-                    <h3 className="font-body text-sm font-semibold text-plum">
+                    <h3
+                      className="
+                        font-body text-sm font-semibold
+                        text-plum
+                      "
+                    >
                       Support Hours
                     </h3>
-                    <p className="mt-1 font-body text-sm leading-6 text-plum/60">
-                      Business hours will be announced when the store launches.
+
+                    <p
+                      className="
+                        mt-1 font-body text-sm
+                        leading-6 text-plum/60
+                      "
+                    >
+                      Send us a message anytime.
+                      We'll respond as soon as we're available.
                     </p>
                   </div>
                 </div>
+
               </div>
             </div>
 
@@ -461,8 +596,12 @@ function Contact() {
                 bg-white p-6 sm:p-8
               "
             >
-              {/* Social media icon */}
-              <Camera size={25} strokeWidth={1.5} className="text-rose" />
+              <Camera
+                size={25}
+                strokeWidth={1.5}
+                className="text-rose"
+              />
+
               <h3
                 className="
                   mt-4 font-heading text-xl
@@ -472,27 +611,39 @@ function Contact() {
                 Follow JHAIRS
               </h3>
 
-              <p className="mt-2 font-body text-sm leading-7 text-plum/60">
-                Hair inspiration, new collections and beautiful looks — all in
-                one place.
-              </p>
-
               <p
                 className="
-                  mt-4 font-body text-xs
-                  uppercase tracking-[0.12em]
-                  text-rose
+                  mt-2 font-body text-sm
+                  leading-7 text-plum/60
                 "
               >
-                Social links coming soon
+                Hair inspiration, new collections and
+                beautiful looks — all in one place.
               </p>
+
+              <a
+                href={generalWhatsAppLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="
+                  mt-5 inline-flex items-center
+                  gap-2 font-body text-xs
+                  uppercase tracking-[0.12em]
+                  text-rose transition-colors
+                  hover:text-plum
+                "
+              >
+                Connect With Us
+                <ArrowRight size={15} />
+              </a>
             </div>
+
           </aside>
         </div>
       </section>
 
       {/* ======================================= */}
-      {/* SECTION 3 — FREQUENTLY ASKED QUESTIONS  */}
+      {/* SECTION 3 — FREQUENTLY ASKED QUESTIONS */}
       {/* ======================================= */}
 
       <section
@@ -503,6 +654,8 @@ function Contact() {
         "
       >
         <div className="mx-auto max-w-[800px]">
+
+          {/* FAQ heading */}
           <div className="text-center">
             <p
               className="
@@ -522,7 +675,12 @@ function Contact() {
               Frequently Asked Questions
             </h2>
 
-            <p className="mt-4 font-body text-sm leading-7 text-plum/60">
+            <p
+              className="
+                mt-4 font-body text-sm
+                leading-7 text-plum/60
+              "
+            >
               A few answers to help you shop with confidence.
             </p>
           </div>
@@ -543,7 +701,9 @@ function Contact() {
                   {/* FAQ question button */}
                   <button
                     type="button"
-                    onClick={() => setOpenFaq(isOpen ? null : index)}
+                    onClick={() =>
+                      setOpenFaq(isOpen ? null : index)
+                    }
                     aria-expanded={isOpen}
                     aria-controls={`faq-answer-${index}`}
                     className="

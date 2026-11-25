@@ -1,4 +1,3 @@
-
 import express from "express";
 import mongoose from "mongoose";
 import {
@@ -14,20 +13,77 @@ import Order from "../models/Order.js";
  *
  * POST /api/orders/quote
  * - Checks inventory and prices.
+ * - Calculates delivery fees.
  * - Does not save an order.
  *
  * POST /api/orders
  * - Checks customer and delivery details.
  * - Validates inventory and prices.
+ * - Calculates the final order total.
  * - Creates a PENDING / UNPAID order.
  * - Prevents duplicate submissions.
  *
  * IMPORTANT:
- * No payment is collected.
- * No inventory is reserved or deducted.
+ * - No payment is collected.
+ * - No inventory is reserved or deducted.
  */
 
 const router = express.Router();
+
+// ============================================
+// NIGERIAN DELIVERY PRICING
+// ============================================
+
+// Initial JHAIRS delivery rates.
+// Update these whenever courier prices change.
+const DELIVERY_FEES = {
+  LAGOS: 3500,
+  OGUN: 4500,
+  ABUJA: 5000,
+  RIVERS: 4500,
+  OTHER: 6000,
+};
+
+// Supported Nigerian states and FCT.
+const NIGERIAN_STATES = [
+  "Abia",
+  "Adamawa",
+  "Akwa Ibom",
+  "Anambra",
+  "Bauchi",
+  "Bayelsa",
+  "Benue",
+  "Borno",
+  "Cross River",
+  "Delta",
+  "Ebonyi",
+  "Edo",
+  "Ekiti",
+  "Enugu",
+  "Gombe",
+  "Imo",
+  "Jigawa",
+  "Kaduna",
+  "Kano",
+  "Katsina",
+  "Kebbi",
+  "Kogi",
+  "Kwara",
+  "Lagos",
+  "Nasarawa",
+  "Niger",
+  "Ogun",
+  "Ondo",
+  "Osun",
+  "Oyo",
+  "Plateau",
+  "Rivers",
+  "Sokoto",
+  "Taraba",
+  "Yobe",
+  "Zamfara",
+  "Federal Capital Territory",
+];
 
 // ============================================
 // ERROR HELPER
@@ -35,8 +91,83 @@ const router = express.Router();
 
 function orderError(status, message) {
   const error = new Error(message);
+
   error.status = status;
+
   return error;
+}
+
+// ============================================
+// NORMALIZE NIGERIAN STATE
+// ============================================
+
+function normalizeNigerianState(value) {
+  if (typeof value !== "string") {
+    throw orderError(
+      400,
+      "Please select a delivery state."
+    );
+  }
+
+  const cleaned = value.trim().toLowerCase();
+
+  // Accept common ways of writing Abuja/FCT.
+  if (
+    [
+      "abuja",
+      "fct",
+      "f.c.t.",
+      "federal capital territory",
+    ].includes(cleaned)
+  ) {
+    return "Federal Capital Territory";
+  }
+
+  // Match the submitted state to the
+  // standardized Nigerian state list.
+  const state = NIGERIAN_STATES.find(
+    (item) => item.toLowerCase() === cleaned
+  );
+
+  if (!state) {
+    throw orderError(
+      400,
+      "Please select a valid Nigerian state."
+    );
+  }
+
+  return state;
+}
+
+// ============================================
+// CALCULATE DELIVERY FEE
+// ============================================
+
+function calculateDeliveryFee(state) {
+  const normalizedState =
+    normalizeNigerianState(state);
+
+  if (normalizedState === "Lagos") {
+    return DELIVERY_FEES.LAGOS;
+  }
+
+  if (normalizedState === "Ogun") {
+    return DELIVERY_FEES.OGUN;
+  }
+
+  if (normalizedState === "Rivers") {
+    return DELIVERY_FEES.RIVERS;
+  }
+
+  if (
+    normalizedState ===
+    "Federal Capital Territory"
+  ) {
+    return DELIVERY_FEES.ABUJA;
+  }
+
+  // All other Nigerian states.
+  return DELIVERY_FEES.OTHER;
 }
 
 // ============================================
@@ -59,7 +190,9 @@ function getProductQuery(productId) {
     /^[1-9]\d*$/.test(productId) &&
     Number.isSafeInteger(Number(productId))
   ) {
-    return { legacyId: Number(productId) };
+    return {
+      legacyId: Number(productId),
+    };
   }
 
   // MongoDB ObjectIds.
@@ -77,10 +210,18 @@ function getProductQuery(productId) {
 // BACKEND PRODUCT PRICING
 // ============================================
 
-function calculateUnitPrice(product, selections) {
-  const { length, color, density, laceType } =
-    selections;
+function calculateUnitPrice(
+  product,
+  selections
+) {
+  const {
+    length,
+    color,
+    density,
+    laceType,
+  } = selections;
 
+  // Find the selected colour.
   const selectedColor = product.colors.find(
     (option) => option.name === color
   );
@@ -94,6 +235,7 @@ function calculateUnitPrice(product, selections) {
   const extraLengthCost =
     ((length - startingLength) / 2) * 5000;
 
+  // Density pricing.
   const densityCost =
     density === "180%"
       ? 10000
@@ -101,6 +243,7 @@ function calculateUnitPrice(product, selections) {
         ? 20000
         : 0;
 
+  // Lace pricing.
   const laceCost =
     laceType === "5x5 Closure"
       ? 5000
@@ -108,9 +251,11 @@ function calculateUnitPrice(product, selections) {
         ? 15000
         : 0;
 
+  // Colour pricing.
   const colorCost =
     selectedColor?.extraPrice ?? 0;
 
+  // Calculate price using backend values only.
   return (
     product.basePrice +
     extraLengthCost +
@@ -124,7 +269,10 @@ function calculateUnitPrice(product, selections) {
 // FIND EXACT VARIATION STOCK
 // ============================================
 
-function findVariationStock(product, selections) {
+function findVariationStock(
+  product,
+  selections
+) {
   const variation = (
     product.inventory || []
   ).find(
@@ -221,6 +369,7 @@ async function validateShoppingBag(items) {
     // VERIFY HAIR SELECTIONS
     // ========================================
 
+    // Verify the selected length.
     if (
       !Number.isSafeInteger(length) ||
       !product.lengths.includes(length)
@@ -231,6 +380,7 @@ async function validateShoppingBag(items) {
       );
     }
 
+    // Verify the selected colour.
     const selectedColor = product.colors.find(
       (option) => option.name === color
     );
@@ -242,6 +392,7 @@ async function validateShoppingBag(items) {
       );
     }
 
+    // Verify the selected density.
     const validDensity =
       product.densities.includes(density) ||
       (
@@ -256,6 +407,7 @@ async function validateShoppingBag(items) {
       );
     }
 
+    // Verify the selected lace type.
     const validLace =
       product.laceTypes.includes(laceType) ||
       (
@@ -276,7 +428,12 @@ async function validateShoppingBag(items) {
 
     const stock = findVariationStock(
       product,
-      { color, length, density, laceType }
+      {
+        color,
+        length,
+        density,
+        laceType,
+      }
     );
 
     if (
@@ -286,11 +443,12 @@ async function validateShoppingBag(items) {
       throw orderError(
         409,
         `${product.name} (${length}", ${color}) ` +
-        "is currently out of stock. " +
-        "Please update your shopping bag."
+          "is currently out of stock. " +
+          "Please update your shopping bag."
       );
     }
 
+    // Create a unique key for this variation.
     const variantKey = JSON.stringify([
       String(product._id),
       color,
@@ -299,6 +457,8 @@ async function validateShoppingBag(items) {
       laceType,
     ]);
 
+    // Calculate combined quantities when
+    // the same variation appears more than once.
     const combinedQuantity =
       (quantitiesByVariant.get(variantKey) ?? 0) +
       quantity;
@@ -307,19 +467,21 @@ async function validateShoppingBag(items) {
       throw orderError(
         400,
         `${product.name} exceeds the ` +
-        "20-unit variation limit."
+          "20-unit variation limit."
       );
     }
 
+    // Ensure the requested quantity is in stock.
     if (combinedQuantity > stock) {
       throw orderError(
         409,
         `Only ${stock} unit(s) of ` +
-        `${product.name} (${length}", ${color}) ` +
-        "are currently available."
+          `${product.name} (${length}", ${color}) ` +
+          "are currently available."
       );
     }
 
+    // Store the combined quantity for this variation.
     quantitiesByVariant.set(
       variantKey,
       combinedQuantity
@@ -331,11 +493,17 @@ async function validateShoppingBag(items) {
 
     const unitPrice = calculateUnitPrice(
       product,
-      { length, color, density, laceType }
+      {
+        length,
+        color,
+        density,
+        laceType,
+      }
     );
 
     const lineTotal = unitPrice * quantity;
 
+    // Ensure all calculated prices are valid.
     if (
       !Number.isSafeInteger(unitPrice) ||
       unitPrice <= 0 ||
@@ -347,6 +515,7 @@ async function validateShoppingBag(items) {
       );
     }
 
+    // Add the validated item to the quote.
     validatedItems.push({
       productId: String(product._id),
       legacyId: product.legacyId,
@@ -364,6 +533,7 @@ async function validateShoppingBag(items) {
     });
   }
 
+  // Calculate subtotal using verified prices.
   const subtotal = validatedItems.reduce(
     (sum, item) => sum + item.lineTotal,
     0
@@ -386,7 +556,11 @@ async function validateShoppingBag(items) {
 // CUSTOMER DETAILS VALIDATION
 // ============================================
 
-function requiredText(value, field, max = 150) {
+function requiredText(
+  value,
+  field,
+  max = 150
+) {
   if (
     typeof value !== "string" ||
     !value.trim() ||
@@ -401,7 +575,11 @@ function requiredText(value, field, max = 150) {
   return value.trim();
 }
 
-function optionalText(value, field, max = 500) {
+function optionalText(
+  value,
+  field,
+  max = 500
+) {
   if (value === undefined || value === null) {
     return "";
   }
@@ -437,19 +615,23 @@ function validateGuestDetails(body) {
     );
   }
 
+  // Validate and normalize email.
   const email = requiredText(
     customer.email,
     "email address",
     254
   ).toLowerCase();
 
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  if (
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+  ) {
     throw orderError(
       400,
       "Please provide a valid email address."
     );
   }
 
+  // Validate phone number.
   const phone = requiredText(
     customer.phone,
     "phone number",
@@ -463,6 +645,7 @@ function validateGuestDetails(body) {
     );
   }
 
+  // Validate delivery method.
   const deliveryMethod =
     body.deliveryMethod ?? "standard";
 
@@ -477,6 +660,28 @@ function validateGuestDetails(body) {
     );
   }
 
+  // ==========================================
+  // VALIDATE DELIVERY ADDRESS
+  // ==========================================
+
+  const validatedCountry = requiredText(
+    address.country,
+    "country",
+    100
+  );
+
+  // Nigeria-only delivery.
+  if (
+    validatedCountry.trim().toLowerCase() !==
+    "nigeria"
+  ) {
+    throw orderError(
+      400,
+      "Delivery is currently available " +
+        "within Nigeria only."
+    );
+  }
+
   return {
     customer: {
       firstName: requiredText(
@@ -484,12 +689,15 @@ function validateGuestDetails(body) {
         "first name",
         80
       ),
+
       lastName: requiredText(
         customer.lastName,
         "last name",
         80
       ),
+
       email,
+
       phone,
     },
 
@@ -499,26 +707,26 @@ function validateGuestDetails(body) {
         "street address",
         200
       ),
+
       apartment: optionalText(
         address.apartment,
         "apartment or landmark",
         150
       ),
+
       city: requiredText(
         address.city,
         "city",
         100
       ),
-      state: requiredText(
-        address.state,
-        "state or region",
-        100
+
+      // Validate and standardize Nigerian states.
+      state: normalizeNigerianState(
+        address.state
       ),
-      country: requiredText(
-        address.country,
-        "country",
-        100
-      ),
+
+      // Standardize country.
+      country: "Nigeria",
     },
 
     deliveryMethod,
@@ -554,15 +762,12 @@ function generateOrderNumber() {
 
 /**
  * Generate a fingerprint for the exact order
- * information that the customer submitted.
+ * information the customer submitted.
  *
- * We deliberately include the customer,
- * address, delivery choice and cart items.
- *
- * IMPORTANT:
  * This checks submission consistency.
  * It does not authenticate the customer.
  */
+
 function createOrderRequestHash(body) {
   const items = body.items.map((item) => ({
     productId: item.productId,
@@ -587,10 +792,15 @@ function createOrderRequestHash(body) {
     .digest("hex");
 }
 
+// ============================================
+// SAFE ORDER RESPONSE
+// ============================================
+
 /**
  * Return only safe confirmation details.
  * Never return a full MongoDB order document.
  */
+
 function formatOrderResponse(order) {
   return {
     id: String(order._id),
@@ -605,16 +815,20 @@ function formatOrderResponse(order) {
   };
 }
 
-/**
- * Verify that the retry uses the same
- * request details as the original order.
- */
+// ============================================
+// EXISTING ORDER RECOVERY
+// ============================================
+
 function respondWithExistingOrder(
   order,
   requestHash,
   res
 ) {
-  if (order.orderRequestHash !== requestHash) {
+  // Prevent a request ID from being reused
+  // for a different checkout submission.
+  if (
+    order.orderRequestHash !== requestHash
+  ) {
     return res.status(409).json({
       success: false,
       message:
@@ -640,7 +854,12 @@ function respondWithExistingOrder(
 // ERROR HANDLER
 // ============================================
 
-function handleOrderError(error, res, action) {
+function handleOrderError(
+  error,
+  res,
+  action
+) {
+  // Return expected validation errors.
   if (error.status) {
     return res.status(error.status).json({
       success: false,
@@ -648,6 +867,7 @@ function handleOrderError(error, res, action) {
     });
   }
 
+  // Log unexpected server errors.
   console.error(
     `JHAIRS ${action} error:`,
     error
@@ -661,25 +881,48 @@ function handleOrderError(error, res, action) {
 }
 
 // ============================================
-// QUOTE — NO ORDER IS SAVED
+// ORDER QUOTE — NO ORDER IS SAVED
 // ============================================
 
 router.post("/quote", async (req, res) => {
   try {
+    // Validate cart and calculate verified prices.
     const verified = await validateShoppingBag(
       req.body?.items
     );
 
+    // Accept the state from nested address
+    // or directly from the request body.
+    const deliveryState =
+      req.body?.deliveryAddress?.state ??
+      req.body?.state;
+
+    // Calculate delivery using backend rates.
+    const deliveryFee =
+      calculateDeliveryFee(deliveryState);
+
+    // Calculate the complete order total.
+    const total =
+      verified.subtotal + deliveryFee;
+
     return res.status(200).json({
       success: true,
+
       message:
         "Order quote calculated successfully.",
+
       currency: "NGN",
+
       items: verified.items,
+
       subtotal: verified.subtotal,
-      deliveryFee: null,
-      total: null,
-      canPlaceOrder: false,
+
+      deliveryFee,
+
+      total,
+
+      canPlaceOrder: true,
+
       note:
         "This is a quotation only. " +
         "No order has been placed, stock reserved, " +
@@ -707,12 +950,13 @@ router.post("/", async (req, res) => {
     // ========================================
 
     /**
-     * The frontend will generate a UUID for
+     * The frontend generates a UUID for
      * each new checkout submission.
      *
      * Retrying the same submission must use
      * the same UUID.
      */
+
     const requestId = body.orderRequestId;
 
     if (
@@ -727,8 +971,7 @@ router.post("/", async (req, res) => {
       );
     }
 
-    // Ensure the payload has the expected
-    // structure before calculating its hash.
+    // Ensure the payload has the expected structure.
     if (
       !body.customer ||
       typeof body.customer !== "object" ||
@@ -766,9 +1009,9 @@ router.post("/", async (req, res) => {
      * revalidating live inventory.
      *
      * A legitimate retry should recover the
-     * original order even if stock has changed
-     * since the first submission.
+     * original order even if stock has changed.
      */
+
     const existingOrder = await Order.findOne({
       orderRequestId: requestId,
     }).select("+orderRequestHash");
@@ -785,12 +1028,24 @@ router.post("/", async (req, res) => {
     // VALIDATE NEW ORDER
     // ========================================
 
+    // Validate customer and delivery details.
     const guestDetails =
       validateGuestDetails(body);
 
+    // Verify product availability and pricing.
     const verified =
       await validateShoppingBag(body.items);
 
+    // Calculate delivery fee from validated state.
+    const deliveryFee = calculateDeliveryFee(
+      guestDetails.deliveryAddress.state
+    );
+
+    // Calculate final order total.
+    const total =
+      verified.subtotal + deliveryFee;
+
+    // Convert verified cart items to order format.
     const orderItems = verified.items.map(
       (item) => ({
         product: item.productId,
@@ -819,17 +1074,22 @@ router.post("/", async (req, res) => {
         ...guestDetails,
 
         items: orderItems,
-        subtotal: verified.subtotal,
-        deliveryFee: null,
-        total: null,
 
+        // Save all verified financial amounts.
+        subtotal: verified.subtotal,
+        deliveryFee,
+        total,
+
+        // Payment has not been integrated yet.
         orderStatus: "PENDING",
         paymentStatus: "UNPAID",
 
         paymentReference: null,
+
+        // Inventory has not been committed.
         inventoryCommitted: false,
 
-        // New idempotency fields.
+        // Idempotency fields.
         orderRequestId: requestId,
         orderRequestHash: requestHash,
       });
@@ -841,9 +1101,9 @@ router.post("/", async (req, res) => {
        * MongoDB's unique index allows only
        * one to create the order.
        *
-       * If we hit a duplicate-key error,
-       * recover the existing order instead.
+       * Recover the existing order on conflict.
        */
+
       if (error.code === 11000) {
         const existing = await Order.findOne({
           orderRequestId: requestId,
@@ -860,7 +1120,7 @@ router.post("/", async (req, res) => {
         throw orderError(
           409,
           "An order reference conflict occurred. " +
-          "Please retry your request."
+            "Please retry your request."
         );
       }
 
@@ -873,14 +1133,21 @@ router.post("/", async (req, res) => {
 
     return res.status(201).json({
       success: true,
+
       reused: false,
+
+      // Correct message because payment
+      // is not yet available.
       message:
-        "Your order request has been received. " +
-        "Payment and delivery are not yet confirmed.",
+        "Your order request has been submitted " +
+        "successfully. Payment has not been " +
+        "collected yet.",
+
       order: formatOrderResponse(order),
+
       note:
-        "No payment has been collected and " +
-        "no inventory has been reserved or deducted.",
+        "Payment has not been collected and " +
+        "inventory has not been reserved or deducted.",
     });
   } catch (error) {
     return handleOrderError(

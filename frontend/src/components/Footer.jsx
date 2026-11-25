@@ -6,6 +6,7 @@ import {
   Camera,
   Heart,
   Mail,
+  MessageCircle,
 } from "lucide-react";
 
 /**
@@ -15,13 +16,20 @@ import {
  * - Luxury brand section.
  * - Working internal navigation links.
  * - Links to filtered hair collections.
- * - Contact link.
+ * - Direct email customer support.
+ * - Direct WhatsApp customer support.
  * - Back-to-top button.
  * - Responsive mobile, tablet and desktop layout.
- *
- * Social links will be added once
- * the actual JHAIRS accounts are ready.
  */
+
+// JHAIRS customer support details.
+const WHATSAPP_NUMBER = "2349136466679";
+const SUPPORT_EMAIL = "agujoan86@gmail.com";
+
+// WhatsApp support link with a default message.
+const whatsappLink = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(
+  "Hello JHAIRS! I'd love to make an enquiry about your hair collections."
+)}`;
 
 // Main navigation links.
 const quickLinks = [
@@ -108,9 +116,9 @@ function Footer() {
               and inspire confidence.
             </p>
 
-            {/* Social media placeholders */}
+            {/* ========== CUSTOMER SUPPORT ICONS ========== */}
             <div className="mt-7 flex items-center gap-3">
-              {/* Social accounts aren't linked yet. */}
+              {/* Social media placeholder */}
               <span
                 title="Social media coming soon"
                 aria-label="Social media coming soon"
@@ -124,10 +132,32 @@ function Footer() {
                 <Camera size={19} strokeWidth={1.6} />
               </span>
 
-              {/* Contact page shortcut */}
-              <Link
-                to="/contact"
-                aria-label="Contact JHAIRS"
+              {/* WhatsApp support */}
+              <a
+                href={whatsappLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Chat with JHAIRS on WhatsApp"
+                title="Chat with us on WhatsApp"
+                className="
+                  flex h-11 w-11 items-center
+                  justify-center rounded-full
+                  border border-plum/10
+                  bg-white/70 text-plum
+                  transition-all duration-300
+                  hover:border-[#25D366]
+                  hover:bg-[#25D366]
+                  hover:text-white
+                "
+              >
+                <MessageCircle size={19} strokeWidth={1.6} />
+              </a>
+
+              {/* Email support */}
+              <a
+                href={`mailto:${SUPPORT_EMAIL}`}
+                aria-label="Email JHAIRS customer support"
+                title="Email customer support"
                 className="
                   flex h-11 w-11 items-center
                   justify-center rounded-full
@@ -139,8 +169,20 @@ function Footer() {
                 "
               >
                 <Mail size={19} strokeWidth={1.6} />
-              </Link>
+              </a>
             </div>
+
+            {/* Customer support email */}
+            <a
+              href={`mailto:${SUPPORT_EMAIL}`}
+              className="
+                mt-4 inline-block font-body
+                text-xs text-plum/60
+                transition-colors hover:text-rose
+              "
+            >
+              {SUPPORT_EMAIL}
+            </a>
           </div>
 
           {/* ========== QUICK LINKS ========== */}

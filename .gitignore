@@ -22,10 +22,11 @@ Thumbs.db
 # Editor files
 .vscode/
 
-note
 
 # Windows shortcut files
 *.lnk
 
-# Local notes containing configuration details
-note
+# Local testing and private notes
+/backend/test-email.js
+/note
+

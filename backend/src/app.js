@@ -6,43 +6,13 @@ import cors from "cors";
 // EXISTING JHAIRS ROUTES
 // ============================================
 
-// Customer catalogue, product details, and inventory.
 import productRoutes from "./routes/productRoutes.js";
-
-// Public checkout quote and guest order creation.
 import orderRoutes from "./routes/orderRoutes.js";
-
-// Administrator authentication and login.
 import adminAuthRoutes from "./routes/adminAuthRoutes.js";
-
-// Administrator product management.
 import adminProductRoutes from "./routes/adminProductRoutes.js";
-
-// Secure Cloudinary product image uploads.
 import adminUploadRoutes from "./routes/adminUploadRoutes.js";
-
-// ============================================
-// NEW — PROTECTED ADMIN ORDERS API
-// ============================================
-
+import paymentRoutes from "./routes/paymentRoutes.js";
 import adminOrderRoutes from "./routes/adminOrderRoutes.js";
-
-/**
- * JHAIRS — EXPRESS APPLICATION
- *
- * PUBLIC FEATURES:
- * - Product catalogue.
- * - Product details and inventory checks.
- * - Checkout quotation.
- * - Guest order requests.
- *
- * ADMINISTRATOR FEATURES:
- * - Secure login and session verification.
- * - Product management.
- * - Inventory management.
- * - Cloudinary image uploads.
- * - Customer order management (read-only for now).
- */
 
 // ============================================
 // CREATE EXPRESS APPLICATION
@@ -51,22 +21,52 @@ import adminOrderRoutes from "./routes/adminOrderRoutes.js";
 const app = express();
 
 // ============================================
-// CONFIGURE GLOBAL MIDDLEWARE
+// CONFIGURE CORS
 // ============================================
 
-// Allow our React development frontend.
+// Allow the local frontend and configured production frontend.
+// FRONTEND_URL can contain one origin.
+// FRONTEND_URLS can contain multiple comma-separated origins.
+const allowedOrigins = [
+  "http://localhost:5173",
+  process.env.FRONTEND_URL,
+  ...(process.env.FRONTEND_URLS || "").split(","),
+]
+  .filter(Boolean)
+  .map((origin) => origin.trim().replace(/\/$/, ""));
+
 app.use(
   cors({
-    origin: "http://localhost:5173",
-  })
+    origin: (origin, callback) => {
+      // Allow requests without an Origin header, such as server-to-server
+      // requests and local health checks.
+      if (!origin || allowedOrigins.includes(origin.replace(/\/$/, ""))) {
+        return callback(null, true);
+      }
+
+      // Do not grant browser access to unapproved origins.
+      return callback(null, false);
+    },
+  }),
 );
 
-// Parse JSON request bodies.
-// Multer handles image uploads separately.
+// ============================================
+// PARSE JSON REQUEST BODIES
+// ============================================
+
+// Preserve the exact raw body for the Paystack webhook.
+// Paystack's signature must be checked against the original bytes.
 app.use(
   express.json({
     limit: "100kb",
-  })
+    verify: (req, res, buffer) => {
+      const requestPath = req.originalUrl.split("?")[0];
+
+      if (requestPath === "/api/payments/webhook") {
+        req.rawBody = Buffer.from(buffer);
+      }
+    },
+  }),
 );
 
 // ============================================
@@ -89,34 +89,35 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// Customer catalogue and inventory endpoints.
+// Customer catalogue and inventory.
 app.use("/api/products", productRoutes);
 
 // Customer checkout and guest order creation.
 app.use("/api/orders", orderRoutes);
 
+// Payment initialization, verification and Paystack webhook.
+app.use("/api/payments", paymentRoutes);
+
 // ============================================
 // ADMINISTRATOR ROUTES
 // ============================================
 
-// Login and verify administrator sessions.
+// Administrator login and session verification.
 app.use("/api/admin", adminAuthRoutes);
 
-// Product creation and editing.
+// Administrator product management.
 app.use("/api/admin/products", adminProductRoutes);
 
-// Upload product images to Cloudinary.
+// Secure product image uploads.
 app.use("/api/admin/uploads", adminUploadRoutes);
 
-// Protected customer order listing and details.
-// Authentication is enforced inside adminOrderRoutes.
+// Protected order management.
 app.use("/api/admin/orders", adminOrderRoutes);
 
 // ============================================
 // UNKNOWN ROUTES
 // ============================================
 
-// Return JSON for unknown endpoints.
 app.use((req, res) => {
   return res.status(404).json({
     success: false,

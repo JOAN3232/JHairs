@@ -3,39 +3,26 @@
  * JHAIRS — GUEST CHECKOUT API
  *
  * This file handles:
- *
  * 1. Requesting verified order quotations.
- * 2. Submitting guest order requests.
- * 3. Sending an idempotency request ID.
- * 4. Displaying backend validation errors.
+ * 2. Sending the selected delivery state to the backend.
+ * 3. Submitting guest order requests.
+ * 4. Sending an idempotency request ID.
+ * 5. Displaying backend validation errors.
  *
  * IMPORTANT:
- * - Prices are calculated by the backend.
- * - Inventory is verified by the backend.
- * - Orders are saved as PENDING / UNPAID.
- * - No payment is collected here.
+ * - Product prices are calculated by the backend.
+ * - Delivery fees are calculated by the backend.
+ * - The frontend must never be trusted to determine final order totals.
+ * - Orders are created as PENDING and UNPAID.
  */
 
-// ============================================
-// BACKEND API URL
-// ============================================
-
-// Use the configured production URL when available.
-// Otherwise, connect to our local Express server.
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
   "http://localhost:5000";
 
-// ============================================
-// HELPER — PREPARE CART ITEMS
-// ============================================
-
 /**
- * Send only product identifiers, selected
- * variations and quantities.
- *
- * Never send browser-calculated prices
- * as authoritative order amounts.
+ * Converts frontend cart items into the format
+ * expected by the backend order API.
  */
 function prepareCartItems(cartItems) {
   return cartItems.map((item) => ({
@@ -48,10 +35,10 @@ function prepareCartItems(cartItems) {
   }));
 }
 
-// ============================================
-// HELPER — HANDLE API RESPONSES
-// ============================================
-
+/**
+ * Safely reads the API response.
+ * Handles invalid JSON and backend error messages.
+ */
 async function readApiResponse(response) {
   let data;
 
@@ -63,56 +50,69 @@ async function readApiResponse(response) {
     );
   }
 
-  // Pass backend validation messages
-  // directly to the calling page.
   if (!response.ok || !data.success) {
     throw new Error(
-      data.message ||
-        "Unable to process your request."
+      data.message || "Unable to process your request."
     );
   }
 
   return data;
 }
 
-// ============================================
-// REQUEST AN ORDER QUOTATION
-// ============================================
-
 /**
- * Validates products, prices and available
- * inventory without creating an order.
+ * REQUEST ORDER QUOTE
+ *
+ * Sends the cart items AND selected delivery state.
+ *
+ * The backend verifies:
+ * - Product existence
+ * - Selected variations
+ * - Stock availability
+ * - Product prices
+ * - Delivery fee
+ * - Total order amount
+ *
+ * No order is created at this stage.
  */
-export async function fetchOrderQuote(cartItems) {
+export async function fetchOrderQuote(
+  cartItems,
+  deliveryState
+) {
   const items = prepareCartItems(cartItems);
 
   const response = await fetch(
     `${API_BASE_URL}/api/orders/quote`,
     {
       method: "POST",
+
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ items }),
+
+      body: JSON.stringify({
+        items,
+
+        deliveryAddress: {
+          state: deliveryState,
+        },
+      }),
     }
   );
 
   return readApiResponse(response);
 }
 
-// ============================================
-// CREATE A GUEST ORDER REQUEST
-// ============================================
-
 /**
- * Sends the reviewed cart and customer details
- * to the JHAIRS backend.
+ * CREATE GUEST ORDER
  *
- * Each new order needs an orderRequestId.
- * Retrying the SAME order must reuse its ID.
+ * Submits the customer's order after checkout confirmation.
  *
- * The backend is responsible for verifying
- * products and preventing duplicate orders.
+ * The backend recalculates:
+ * - Product subtotal
+ * - Delivery fee
+ * - Final total
+ *
+ * The frontend does not send trusted prices.
  */
 export async function createGuestOrder({
   cartItems,
@@ -122,43 +122,60 @@ export async function createGuestOrder({
   notes,
   orderRequestId,
 }) {
-  // Ensure the caller supplies a properly
-  // formatted UUID.
-  const uuidPattern =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-  if (
-    typeof orderRequestId !== "string" ||
-    !uuidPattern.test(orderRequestId)
-  ) {
-    throw new Error(
-      "A valid order request ID is required."
-    );
-  }
-
-  // Prepare selected product variations.
   const items = prepareCartItems(cartItems);
 
-  // Submit the order request.
   const response = await fetch(
     `${API_BASE_URL}/api/orders`,
     {
       method: "POST",
+
       headers: {
         "Content-Type": "application/json",
       },
+
       body: JSON.stringify({
-        orderRequestId,
+        items,
         customer,
         deliveryAddress,
         deliveryMethod,
         notes,
-        items,
+
+        // Prevent duplicate orders when a request
+        // is repeated because of a network issue.
+        orderRequestId,
       }),
     }
   );
 
-  // Return the saved order's reference,
-  // statuses and verified subtotal.
+  return readApiResponse(response);
+}
+
+
+
+// ============================================
+// INITIALIZE PAYSTACK PAYMENT
+// ============================================
+
+export async function initializeGuestPayment(orderNumber) {
+  const response = await fetch(`${API_BASE_URL}/api/payments/initialize`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ orderNumber }),
+  });
+
+  return readApiResponse(response);
+}
+
+// ============================================
+// VERIFY PAYSTACK PAYMENT
+// ============================================
+
+export async function verifyGuestPayment(reference) {
+  const response = await fetch(
+    `${API_BASE_URL}/api/payments/verify/${encodeURIComponent(reference)}`
+  );
+
   return readApiResponse(response);
 }

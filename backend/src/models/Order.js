@@ -1,28 +1,6 @@
 
 import mongoose from "mongoose";
 
-/**
- * JHAIRS — ORDER MODEL
- *
- * Stores guest checkout orders in MongoDB.
- *
- * FEATURES:
- * - Unique order references.
- * - Customer contact information.
- * - Delivery information.
- * - Purchased products and variations.
- * - Backend-calculated prices.
- * - Order and payment statuses.
- * - Payment tracking.
- * - Inventory deduction tracking.
- * - Duplicate-order protection.
- *
- * NEW — STEP 36A:
- * - Order status change history.
- *
- * Customers do not need an account.
- */
-
 // ==========================================
 // ORDER ITEM SCHEMA
 // ==========================================
@@ -41,6 +19,7 @@ const orderItemSchema = new mongoose.Schema(
     name: {
       type: String,
       required: true,
+      trim: true,
     },
 
     // Snapshot of the product image.
@@ -101,21 +80,8 @@ const orderItemSchema = new mongoose.Schema(
 );
 
 // ==========================================
-// NEW — ORDER STATUS HISTORY SCHEMA
+// ORDER STATUS HISTORY SCHEMA
 // ==========================================
-
-/**
- * Each history entry represents one status change.
- *
- * Example:
- * from: "PENDING"
- * to: "CONFIRMED"
- * changedAt: timestamp
- * changedBy: administrator MongoDB ID
- *
- * These records will be written by our protected
- * backend status-management endpoint.
- */
 
 const orderStatusHistorySchema = new mongoose.Schema(
   {
@@ -162,7 +128,6 @@ const orderStatusHistorySchema = new mongoose.Schema(
     },
   },
   {
-    // Each history entry is embedded in its order.
     _id: false,
   }
 );
@@ -275,8 +240,7 @@ const orderSchema = new mongoose.Schema(
         validator: (items) =>
           Array.isArray(items) && items.length > 0,
 
-        message:
-          "An order must contain at least one item.",
+        message: "An order must contain at least one item.",
       },
     },
 
@@ -287,14 +251,14 @@ const orderSchema = new mongoose.Schema(
       min: 0,
     },
 
-    // Delivery has not been priced yet.
+    // Delivery fee.
     deliveryFee: {
       type: Number,
       default: null,
       min: 0,
     },
 
-    // Final amount is set after delivery pricing.
+    // Final amount after delivery pricing.
     total: {
       type: Number,
       default: null,
@@ -319,21 +283,8 @@ const orderSchema = new mongoose.Schema(
     },
 
     // ======================================
-    // NEW — ORDER STATUS HISTORY
+    // ORDER STATUS HISTORY
     // ======================================
-
-    /**
-     * Tracks each order status change.
-     *
-     * New orders begin with an empty history.
-     *
-     * Existing orders without this field are
-     * supported automatically by Mongoose.
-     *
-     * The future protected admin endpoint will
-     * update orderStatus and append history
-     * together in one atomic database operation.
-     */
 
     statusHistory: {
       type: [orderStatusHistorySchema],
@@ -343,14 +294,6 @@ const orderSchema = new mongoose.Schema(
     // ======================================
     // PAYMENT STATUS
     // ======================================
-
-    /**
-     * Payment state remains separate from
-     * order fulfilment state.
-     *
-     * Admin status updates must never
-     * automatically mark an order as PAID.
-     */
 
     paymentStatus: {
       type: String,
@@ -368,10 +311,32 @@ const orderSchema = new mongoose.Schema(
     // PAYMENT TRACKING
     // ======================================
 
-    // Reference from the payment provider.
-    // Remains null until payment is initialized.
+    // Reference from Paystack.
     paymentReference: {
       type: String,
+      default: null,
+    },
+
+    // Paystack checkout URL.
+    paymentAuthorizationUrl: {
+      type: String,
+      default: null,
+    },
+
+    // Records payment problems requiring review.
+    paymentIssue: {
+      type: String,
+      default: null,
+    },
+
+    // ======================================
+    // PAYMENT INITIALIZATION LOCK
+    // ======================================
+
+    // Prevents multiple simultaneous Paystack
+    // initialization requests for the same order.
+    paymentInitializationStartedAt: {
+      type: Date,
       default: null,
     },
 
@@ -379,37 +344,54 @@ const orderSchema = new mongoose.Schema(
     // INVENTORY DEDUCTION TRACKING
     // ======================================
 
-    /**
-     * Indicates whether product inventory
-     * has already been deducted.
-     *
-     * This field alone does not guarantee
-     * protection from duplicate deductions.
-     *
-     * Payment processing must enforce
-     * stock updates atomically.
-     */
-
     inventoryCommitted: {
       type: Boolean,
       default: false,
     },
 
     // ======================================
-    // DUPLICATE ORDER PROTECTION
+    // EMAIL NOTIFICATION TRACKING
     // ======================================
 
-    /**
-     * Unique order submission identifier.
-     *
-     * A retry with the same identifier
-     * can return the original order.
-     *
-     * sparse supports older orders without
-     * an orderRequestId.
-     *
-     * immutable prevents changing the ID.
-     */
+    // Customer payment confirmation email.
+    customerConfirmationSentAt: {
+      type: Date,
+      default: null,
+    },
+
+    // Admin new-order notification email.
+    adminNotificationSentAt: {
+      type: Date,
+      default: null,
+    },
+
+    // Customer confirmation sending lock.
+    customerConfirmationSendingAt: {
+      type: Date,
+      default: null,
+    },
+
+    // Admin notification sending lock.
+    adminNotificationSendingAt: {
+      type: Date,
+      default: null,
+    },
+
+    // Customer out-for-delivery email.
+    deliveryNotificationSentAt: {
+      type: Date,
+      default: null,
+    },
+
+    // Delivery notification sending lock.
+    deliveryNotificationSendingAt: {
+      type: Date,
+      default: null,
+    },
+
+    // ======================================
+    // DUPLICATE ORDER PROTECTION
+    // ======================================
 
     orderRequestId: {
       type: String,
@@ -421,20 +403,6 @@ const orderSchema = new mongoose.Schema(
     // ======================================
     // ORDER REQUEST FINGERPRINT
     // ======================================
-
-    /**
-     * SHA-256 fingerprint created by
-     * the backend during order submission.
-     *
-     * Used to distinguish:
-     *
-     * 1. A legitimate retry of the same order.
-     * 2. A different order reusing the same ID.
-     *
-     * Hidden from ordinary database queries.
-     *
-     * This is not customer authentication.
-     */
 
     orderRequestHash: {
       type: String,
@@ -448,6 +416,20 @@ const orderSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+// ==========================================
+// DATABASE INDEXES
+// ==========================================
+
+// Support efficient order searches and sorting.
+orderSchema.index({
+  createdAt: -1,
+  _id: -1,
+});
+
+orderSchema.index({
+  paymentReference: 1,
+});
 
 // ==========================================
 // EXPORT ORDER MODEL

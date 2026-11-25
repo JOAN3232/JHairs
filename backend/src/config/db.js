@@ -4,39 +4,72 @@ import mongoose from "mongoose";
 /**
  * JHAIRS — MONGODB DATABASE CONNECTION
  *
- * This file connects our backend to MongoDB Atlas
- * using Mongoose.
+ * RESPONSIBILITIES:
+ * 1. Read the MongoDB connection string.
+ * 2. Validate database configuration.
+ * 3. Connect to MongoDB Atlas.
+ * 4. Configure safe database connection behaviour.
+ * 5. Report connection errors without exposing credentials.
  */
 
-// Create an asynchronous database connection function.
+// ==========================================
+// DATABASE CONNECTION
+// ==========================================
+
 const connectDB = async () => {
+  const mongoURI = process.env.MONGODB_URI;
+
+  // Stop if the connection string is missing.
+  if (!mongoURI || !mongoURI.trim()) {
+    throw new Error("MONGODB_URI is missing from environment variables.");
+  }
+
   try {
-    // Read the connection string from our .env file.
-    const mongoURI = process.env.MONGODB_URI;
-
-    // Stop if the MongoDB connection string is missing.
-    if (!mongoURI) {
-      throw new Error("MONGODB_URI is missing from .env");
-    }
-
     // Connect to MongoDB Atlas.
-    const connection = await mongoose.connect(mongoURI);
+    const connection = await mongoose.connect(mongoURI, {
+      serverSelectionTimeoutMS: 10000,
+      socketTimeoutMS: 45000,
+      maxPoolSize: 10,
+      minPoolSize: 0,
+    });
 
-    // Display a success message when connected.
     console.log(
       `JHAIRS MongoDB connected: ${connection.connection.name}`
     );
+
+    return connection;
   } catch (error) {
-    // Display a safe error message without printing credentials.
+    // Do not print the connection string or credentials.
     console.error(
       "JHAIRS MongoDB connection failed:",
       error.message
     );
 
-    // Stop the server if the database cannot connect.
-    process.exit(1);
+    throw error;
   }
 };
 
-// Export the function for use in server.js.
+// ==========================================
+// DATABASE CONNECTION EVENTS
+// ==========================================
+
+mongoose.connection.on("disconnected", () => {
+  console.warn("JHAIRS MongoDB disconnected.");
+});
+
+mongoose.connection.on("reconnected", () => {
+  console.log("JHAIRS MongoDB reconnected.");
+});
+
+mongoose.connection.on("error", (error) => {
+  console.error(
+    "JHAIRS MongoDB connection error:",
+    error.message
+  );
+});
+
+// ==========================================
+// EXPORT DATABASE CONNECTION
+// ==========================================
+
 export default connectDB;
